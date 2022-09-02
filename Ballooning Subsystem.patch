@@ -1,0 +1,2150 @@
+From c0f8703ea91d6c872051876657039ba40d79f141 Mon Sep 17 00:00:00 2001
+From: vivek kumar <vivekkumar13@iisc.ac.in>
+Date: Mon, 14 Mar 2022 01:24:07 +0530
+Subject: [PATCH 1/4] os assignment-0
+
+Signed-off-by: vivek kumar <vivekkumar13@iisc.ac.in>
+---
+ Makefile                               |  2 +-
+ arch/x86/entry/syscalls/syscall_64.tbl |  1 +
+ arch/x86/include/uapi/asm/signal.h     |  3 +++
+ include/linux/syscalls.h               |  1 +
+ mm/mlock.c                             |  8 ++++++--
+ mm/page_alloc.c                        | 17 +++++++++++++++++
+ mysys/Makefile                         |  1 +
+ mysys/newcall.c                        | 24 ++++++++++++++++++++++++
+ mysys/newcall.h                        |  4 ++++
+ 9 files changed, 58 insertions(+), 3 deletions(-)
+ create mode 100644 mysys/Makefile
+ create mode 100644 mysys/newcall.c
+ create mode 100644 mysys/newcall.h
+
+diff --git a/Makefile b/Makefile
+index 1673c12fb..9ca1349c1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1097,7 +1097,7 @@ export MODORDER := $(extmod-prefix)modules.order
+ export MODULES_NSDEPS := $(extmod-prefix)modules.nsdeps
+ 
+ ifeq ($(KBUILD_EXTMOD),)
+-core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/
++core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/ mysys/
+ 
+ vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, \
+ 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
+diff --git a/arch/x86/entry/syscalls/syscall_64.tbl b/arch/x86/entry/syscalls/syscall_64.tbl
+index 78672124d..9d9e68a2c 100644
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -363,6 +363,7 @@
+ 439	common	faccessat2		sys_faccessat2
+ 440	common	process_madvise		sys_process_madvise
+ 441	common	epoll_pwait2		sys_epoll_pwait2
++442	common	newcall			sys_newcall
+ 
+ #
+ # Due to a historical design error, certain syscalls are numbered differently
+diff --git a/arch/x86/include/uapi/asm/signal.h b/arch/x86/include/uapi/asm/signal.h
+index 164a22a72..f00dc68c6 100644
+--- a/arch/x86/include/uapi/asm/signal.h
++++ b/arch/x86/include/uapi/asm/signal.h
+@@ -67,6 +67,9 @@ typedef unsigned long sigset_t;
+ #define MINSIGSTKSZ	2048
+ #define SIGSTKSZ	8192
+ 
++/*** my code ***/
++#define SIGBALLOON	40
++/***************/
+ #include <asm-generic/signal-defs.h>
+ 
+ #ifndef __ASSEMBLY__
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index 7688bc983..315694f1c 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -1364,4 +1364,5 @@ int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
+ 		int __user *optlen);
+ int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
+ 		int optlen);
++asmlinkage long sys_newcall(int deregister);
+ #endif
+diff --git a/mm/mlock.c b/mm/mlock.c
+index 55b3b3672..bf3f96c01 100644
+--- a/mm/mlock.c
++++ b/mm/mlock.c
+@@ -25,6 +25,7 @@
+ #include <linux/mm_inline.h>
+ 
+ #include "internal.h"
++#include "../../mysys/newcall.h"
+ 
+ bool can_do_mlock(void)
+ {
+@@ -772,8 +773,7 @@ static int apply_mlockall_flags(int flags)
+ 	return 0;
+ }
+ 
+-SYSCALL_DEFINE1(mlockall, int, flags)
+-{
++int do_mlockall(int flags){
+ 	unsigned long lock_limit;
+ 	int ret;
+ 
+@@ -800,6 +800,10 @@ SYSCALL_DEFINE1(mlockall, int, flags)
+ 
+ 	return ret;
+ }
++SYSCALL_DEFINE1(mlockall, int, flags)
++{
++	return do_mlockall(flags);
++}
+ 
+ SYSCALL_DEFINE0(munlockall)
+ {
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 519a60d5b..01f7bbcdd 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -80,6 +80,8 @@
+ #include "shuffle.h"
+ #include "page_reporting.h"
+ 
++#include "../../mysys/newcall.h"
++
+ /* Free Page Internal flags: for internal, non-pcp variants of free_pages(). */
+ typedef int __bitwise fpi_t;
+ 
+@@ -5022,6 +5024,21 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
+ 
+ 	trace_mm_page_alloc(page, order, alloc_mask, ac.migratetype);
+ 
++	/*********** my code**************/
++    
++    if(my_task){
++        long _1GB_pages = 1 << (30 - PAGE_SHIFT);
++        long freePages = global_zone_page_state(NR_FREE_PAGES);
++        if(freePages < _1GB_pages){
++            if(send_sig(SIGBALLOON, my_task, 1) < 0) {
++                printk(KERN_INFO "Unable to send signal(%ld)!\n", freePages);
++            }
++        }
++
++    }
++
++    /*********************************/
++    
+ 	return page;
+ }
+ EXPORT_SYMBOL(__alloc_pages_nodemask);
+diff --git a/mysys/Makefile b/mysys/Makefile
+new file mode 100644
+index 000000000..602067a26
+--- /dev/null
++++ b/mysys/Makefile
+@@ -0,0 +1 @@
++obj-y := newcall.o
+\ No newline at end of file
+diff --git a/mysys/newcall.c b/mysys/newcall.c
+new file mode 100644
+index 000000000..3d87cc6a3
+--- /dev/null
++++ b/mysys/newcall.c
+@@ -0,0 +1,24 @@
++#include <linux/kernel.h>
++#include <linux/mman.h>
++#include <linux/syscalls.h>
++#include "newcall.h"
++
++struct task_struct *my_task;
++SYSCALL_DEFINE1(newcall, int, deregister)
++{
++    // to deregister the signal
++    if(deregister == 1){
++        my_task = NULL;
++        return 0;
++    }
++    
++    // Disable the default swapping algorithm
++    if(do_mlockall(MCL_CURRENT | MCL_FUTURE) < 0){
++        printk(KERN_INFO "Unable to disable swapping algorithm\n");
++    }
++    
++    my_task = current;
++    
++    
++    return 0;
++}
+\ No newline at end of file
+diff --git a/mysys/newcall.h b/mysys/newcall.h
+new file mode 100644
+index 000000000..cf33dbbe8
+--- /dev/null
++++ b/mysys/newcall.h
+@@ -0,0 +1,4 @@
++// #include <linux/sched.h>
++
++extern struct task_struct *my_task;
++extern int do_mlockall(int);
+\ No newline at end of file
+-- 
+2.25.1
+
+
+From 0fba36a687211448177128e48211aa8725ade5f9 Mon Sep 17 00:00:00 2001
+From: vivek kumar <vivekkumar13@iisc.ac.in>
+Date: Mon, 14 Mar 2022 22:24:49 +0530
+Subject: [PATCH 2/4] os assignment-1
+
+Signed-off-by: vivek kumar <vivekkumar13@iisc.ac.in>
+---
+ arch/x86/entry/syscalls/syscall_64.tbl |   1 +
+ include/linux/syscalls.h               |   1 +
+ mysys/newcall.c                        | 348 ++++++++++++++++++++++++-
+ 3 files changed, 349 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/entry/syscalls/syscall_64.tbl b/arch/x86/entry/syscalls/syscall_64.tbl
+index 9d9e68a2c..816a8d089 100644
+--- a/arch/x86/entry/syscalls/syscall_64.tbl
++++ b/arch/x86/entry/syscalls/syscall_64.tbl
+@@ -364,6 +364,7 @@
+ 440	common	process_madvise		sys_process_madvise
+ 441	common	epoll_pwait2		sys_epoll_pwait2
+ 442	common	newcall			sys_newcall
++443 common  swapout			sys_swapout
+ 
+ #
+ # Due to a historical design error, certain syscalls are numbered differently
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index 315694f1c..c8850393d 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -1365,4 +1365,5 @@ int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
+ int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
+ 		int optlen);
+ asmlinkage long sys_newcall(int deregister);
++asmlinkage long sys_swapout(uint64_t* ptr, uint64_t size);
+ #endif
+diff --git a/mysys/newcall.c b/mysys/newcall.c
+index 3d87cc6a3..dce023335 100644
+--- a/mysys/newcall.c
++++ b/mysys/newcall.c
+@@ -1,11 +1,97 @@
+ #include <linux/kernel.h>
+ #include <linux/mman.h>
+ #include <linux/syscalls.h>
++#include <linux/pgtable.h>
++#include <linux/rmap.h>
++#include <linux/pagemap.h>
+ #include "newcall.h"
+-
++#define PGSZ 4096
++#define FR_SIZE 128
++#define ll long long int
+ struct task_struct *my_task;
++
++
++// create new swapfile
++struct file* create(void){
++    char filename[100];
++    sprintf(filename, "/ballooning/swapfile_%d", current->pid);
++    struct file* f = filp_open(filename, O_CREAT | O_RDWR, 0666);
++    if(IS_ERR(f)){
++        printk("swapfile is not created\n");
++        return NULL;
++    }
++    printk("swapfile has been created");
++
++    uint64_t size = 512 * 1024 * 1024 + 16 * 1024;
++    long status = f->f_op->fallocate(f, 0, 0, size);
++    if(status < 0){
++        printk("fallocate didn't worked\n");
++        return 0;
++    }
++    printk("fallocate worked \n");
++
++    return f;
++
++    
++}
++
++// open swap file
++struct file* open(void){
++    char filename[100];
++    sprintf(filename, "/ballooning/swapfile_%d", current->pid);
++    struct file* f = filp_open(filename, O_RDWR, 0);
++    if(IS_ERR(f)){
++        printk("swapfile is not opened\n");
++        return NULL;
++    }
++    printk("swapfile has been opened\n");
++    return f;
++}
++
++// close swap file
++void close(struct file* f){
++    int status = filp_close(f, NULL);
++    if(status < 0){
++        printk("close failed");
++        return;
++    }
++    printk("close succeeded");
++}
++
++
++void readSwap(struct file* f, void* buf, uint64_t offset){
++    uint64_t bytes = kernel_read(f, buf, FR_SIZE * 8, &offset);
++    printk("bytes read = %lld", bytes);
++}
++
++void writeSwap(struct file* f, void* buf, uint64_t offset){
++    uint64_t bytes = kernel_write(f, buf, FR_SIZE * 8, &offset);
++    printk("bytes written = %lld", bytes);
++}
++
++// initialize swapfile
++void initialize_swap(struct file* f){
++
++    // 1 -> free
++    // 0 -> allocated
++
++    uint64_t buf[FR_SIZE], x = 0;
++    int i, j, count = 0, offset = 0;
++    for(i = 0; i < FR_SIZE; i++) buf[i] = ~x;
++    for(i = 0; i < 16; i++){
++        // for(j = 0; j < FR_SIZE; j++){
++        //     buf[j] = ++count;
++        // }
++        writeSwap(f, buf, offset);
++        offset += FR_SIZE * 8;
++    }
++}
++
++
++// id - 442
+ SYSCALL_DEFINE1(newcall, int, deregister)
+ {
++    
+     // to deregister the signal
+     if(deregister == 1){
+         my_task = NULL;
+@@ -17,8 +103,268 @@ SYSCALL_DEFINE1(newcall, int, deregister)
+         printk(KERN_INFO "Unable to disable swapping algorithm\n");
+     }
+     
++    
++    // creating new swapfile
++    struct file* f = create();
++
++    // initializing swapfile
++    initialize_swap(f);
++
++    // uint64_t buf[FR_SIZE];
++    // bool st = false;
++    // int i, j, count = 0, offset = 0;
++    // for(i = 0; i < 16; i++){
++    //     readSwap(f, buf, offset);
++    //     for(j = 0; j < FR_SIZE; j++){
++    //         printk("i = %d, j = %d, %lld", i, j, buf[j]);
++    //         if(buf[j] != ++count){
++    //             printk("not written correctly");
++    //             st = true;
++    //             break;
++    //         }
++    //     }
++    //     if(st) break;
++    //     offset += FR_SIZE * 8;
++    // }
++
++    // closing swapfile
++    close(f);
++
+     my_task = current;
++
++    printk("$newcall done");
++    return 0;
++}
++
++
++static void get_pgtable_macro(void)
++{
++    printk("PAGE_OFFSET = 0x%lx\n", PAGE_OFFSET);
++    printk("PGDIR_SHIFT = %d\n", PGDIR_SHIFT);
++    printk("PUD_SHIFT = %d\n", PUD_SHIFT);
++    printk("PMD_SHIFT = %d\n", PMD_SHIFT);
++    printk("PAGE_SHIFT = %d\n", PAGE_SHIFT);
++
++    printk("PTRS_PER_PGD = %d\n", PTRS_PER_PGD);
++    printk("PTRS_PER_PUD = %d\n", PTRS_PER_PUD);
++    printk("PTRS_PER_PMD = %d\n", PTRS_PER_PMD);
++    printk("PTRS_PER_PTE = %d\n", PTRS_PER_PTE);
++
++    printk("PAGE_MASK = 0x%lx\n", PAGE_MASK);
++}
++
++
++static unsigned long vaddr2paddr(unsigned long vaddr)
++{
++    pgd_t *pgd;
++    p4d_t *p4d;
++    pud_t *pud;
++    pmd_t *pmd;
++    pte_t *pte;
++    unsigned long paddr = 0;
++    unsigned long page_addr = 0;
++    unsigned long page_offset = 0;
++
++    pgd = pgd_offset(current->mm, vaddr);
++    printk("pgd_val = 0x%lx\n", pgd_val(*pgd));
++    printk("pgd_index = %lx\n", pgd_index(vaddr));
++    if (pgd_none(*pgd)) {
++        printk("not mapped in pgd\n");
++        return -1;
++    }
++
++    p4d = p4d_offset(pgd, vaddr);
++    printk("p4d_val = 0x%lx\n", p4d_val(*p4d));
++    printk("p4d_index = %lx\n", p4d_index(vaddr));
++    if (p4d_none(*p4d)) {
++        printk("not mapped in p4d\n");
++        return -1;
++    }    
++
++    pud = pud_offset(p4d, vaddr);
++    printk("pud_val = 0x%lx\n", pud_val(*pud));
++    printk("pud_index = %lx\n", pud_index(vaddr));
++    if (pud_none(*pud)) {
++        printk("not mapped in pud\n");
++        return -1;
++    }
++
++    pmd = pmd_offset(pud, vaddr);
++    printk("pmd_val = 0x%lx\n", pmd_val(*pmd));
++    printk("pmd_index = %lx\n", pmd_index(vaddr));
++    if (pmd_none(*pmd)) {
++        printk("not mapped in pmd\n");
++        return -1;
++    }
++
++    pte = pte_offset_kernel(pmd, vaddr);
++    printk("pte_val = 0x%lx\n", pte_val(*pte));
++    printk("pte_index = %lx\n", pte_index(vaddr));
++    if (pte_none(*pte)) {
++        printk("not mapped in pte\n");
++        return -1;
++    }
++
++    set_pte(pte, pte_mkclean(*pte));
++    
++    struct page* page = pte_page(*pte);
++    if(page) printk("page found");
++    else printk("page not found");
++    int stat = trylock_page(page);
++    if(!stat){
++        printk("stat: %d", stat);
++        return 0;
++    }
++    stat = try_to_unmap(page, TTU_IGNORE_MLOCK);
++    
++    if(stat) printk("page released");
++    else printk("page not released");
++
++    if(pte_present(*pte)) printk("present");
++    else printk("not present");
++    if(pte_dirty(*pte)) printk("dirty");
++    else printk("not dirty");
++
++/* Page frame physical address mechanism | offset */
++    // page_addr = pte_val(*pte) & PAGE_MASK;
++
++    // page_offset = vaddr & ~PAGE_MASK;
++    // paddr = page_addr | page_offset;
++    // printk("page_addr = %lx, pfn = %lx, page_offset = %lx\n", page_addr, pte_pfn(*pte), page_offset);
++    // // flush_tlb_page(current->mm->mmap, vaddr);
++    // printk("vaddr = %lx, paddr = %lx\n", vaddr, paddr);
++
++
++    // unsigned int flag = 1;
++    // flag = ~flag;
++    // unsigned long ptval = pte_val(*pte);
++    // ptval &= flag;
++    // pte_t newpte = __pte(ptval);
++    // set_pte(pte, newpte);
++
++    // set_pte(pte, pte_mkclean(*pte));
++
++    // if(pte_dirty(*pte)) printk("dirty");
++    // else printk("not dirty");
++    // if(pte_present(*pte)) printk("present");
++    // else printk("not present");
++
++
++    /* Page frame physical address mechanism | offset */
++    // page_addr = pte_val(*pte) & PAGE_MASK;
++
++    // page_offset = vaddr & ~PAGE_MASK;
++    // paddr = page_addr | page_offset;
++    // printk("page_addr = %lx, pfn = %lx, page_offset = %lx\n", page_addr, pte_pfn(*pte), page_offset);
++    // // flush_tlb_page(current->mm->mmap, vaddr);
++    // printk("vaddr = %lx, paddr = %lx\n", vaddr, paddr);
++
++    return paddr;
++}
++
++
++
++uint64_t get_first_empty(uint64_t* buf, int t){
++    uint64_t x;
++    int i, cnt = 0;
++
++    for(i = 0; i < FR_SIZE; i++){
++        if(buf[i] == 0) continue;
++        x = buf[i];
++        while((x & 1) == 0) {
++            x >>= 1;
++            cnt++;
++        }
++        // mark that buffer as allocated
++        buf[i] &= ~((uint64_t)1 << cnt); 
++        break;
++    }
++    if(i == FR_SIZE) return -1;
++    cnt += i * 64 + t * 1024 * 8;
++
++    return cnt;
++}
++
++// id - 443
++SYSCALL_DEFINE2(swapout, uint64_t*, ptr, uint64_t, size){
++    
++    struct file* f = open();
++    // void* p = ptr[0];
++    uint64_t buf[FR_SIZE];
++    uint64_t data[FR_SIZE];
++    uint64_t offset = 0;
++
+     
++    // get_pgtable_macro();
++    // vaddr2paddr(ptr);
++    
++    int i, j, k, cnt, n = 0;
++    uint64_t pos;
++
++    int count = 0;
++    
++    for(i = 0; i < 16; i++){
++        readSwap(f, buf, offset);
++        while(n < size){
++            // find the empty slot
++            pos = get_first_empty(buf, i);            
++
++            // if no empty slot found
++            // move to the next buf
++            if(pos < 0) break;
++
++            // increment the pos by 4
++            // as we have 4 pages in beginning 
++            // for meta data
++            pos = pos + 4;
++
++            printk("pos = %lld", pos);
++            // add pos to the pte of page ptr[size]
++
++            
++            // read data from ptr[size] and move to swapfile
++            cnt = 0;
++            for(j = 0; j < 4; j++){
++                for(k = 0; k < FR_SIZE; k++){
++                    data[k] = *((uint64_t*)ptr[n] + cnt);
++                    cnt++;
++                }
++                writeSwap(f, data, pos * PGSZ + j * 1024);
++                count++;
++            }
++            n++;
++
++        }
++        writeSwap(f, buf, offset);
++        offset += FR_SIZE * 8;
++        if(n == size) break;
++    }
++    printk("count = %d", count);
++
+     
++    // ***** test logic *****
++
++    // cnt = 0; offset = 4 * 4096;
++    // int* p = (int*)data;
++    // bool st = false;
++
++    // for(i = 0; i < 40; i++){
++    //     readSwap(f, data, offset);
++    //     for(j = 0; j < 256; j++){
++    //         // printk("given%d", p[j]);
++
++    //         if(p[j] != ++cnt){
++    //             printk("%d, %d wrond data written", i, j);
++    //             st = true;
++    //             break;
++    //         }
++    //     }
++    //     offset += 1024;
++    //     if(st) break;
++    // }
++
++
++    close(f);
++
+     return 0;
+ }
+\ No newline at end of file
+-- 
+2.25.1
+
+
+From efdc06a5d2ae0b944be8d53591f58cfebf451c3a Mon Sep 17 00:00:00 2001
+From: vivek kumar <vivekkumar13@iisc.ac.in>
+Date: Thu, 14 Apr 2022 00:59:24 +0530
+Subject: [PATCH 3/4] os assignment 2.0
+
+Signed-off-by: vivek kumar <vivekkumar13@iisc.ac.in>
+---
+ fs/internal.h            |   6 +
+ fs/namei.c               |  31 +++-
+ include/linux/syscalls.h |   2 +-
+ kernel/exit.c            |  39 +++++
+ mm/memory.c              | 119 +++++++++++++-
+ mm/page_alloc.c          |  57 ++++++-
+ mm/swap.c                |   1 +
+ mysys/Makefile           |   2 +-
+ mysys/fileHandler.c      |  75 +++++++++
+ mysys/fileHandler.h      |   8 +
+ mysys/newcall.c          | 343 ++-------------------------------------
+ mysys/newcall.h          |   5 +-
+ mysys/swapout.c          | 233 ++++++++++++++++++++++++++
+ 13 files changed, 576 insertions(+), 345 deletions(-)
+ create mode 100644 mysys/fileHandler.c
+ create mode 100644 mysys/fileHandler.h
+ create mode 100644 mysys/swapout.c
+
+diff --git a/fs/internal.h b/fs/internal.h
+index 77c50befb..3e0e1fff9 100644
+--- a/fs/internal.h
++++ b/fs/internal.h
+@@ -71,6 +71,12 @@ extern int filename_lookup(int dfd, struct filename *name, unsigned flags,
+ 			   struct path *path, struct path *root);
+ extern int vfs_path_lookup(struct dentry *, struct vfsmount *,
+ 			   const char *, unsigned int, struct path *);
++
++// ***************** my code ************
++long do_my_mkdirat(int dfd, const char __user *pathname, umode_t mode);
++
++// **************************************
++
+ long do_rmdir(int dfd, struct filename *name);
+ long do_unlinkat(int dfd, struct filename *name);
+ int may_linkat(struct path *link);
+diff --git a/fs/namei.c b/fs/namei.c
+index dd85e12ac..034950e82 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -3647,6 +3647,35 @@ int vfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
+ }
+ EXPORT_SYMBOL(vfs_mkdir);
+ 
++// **************************** my code ***************
++
++long do_my_mkdirat(int dfd, const char __user *pathname, umode_t mode)
++{
++	struct dentry *dentry;
++	struct path path;
++	int error;
++	unsigned int lookup_flags = LOOKUP_DIRECTORY;
++
++retry:
++	dentry =kern_path_create(dfd, pathname, &path, lookup_flags);
++	if (IS_ERR(dentry))
++		return PTR_ERR(dentry);
++
++	if (!IS_POSIXACL(path.dentry->d_inode))
++		mode &= ~current_umask();
++	error = security_path_mkdir(&path, dentry, mode);
++	if (!error)
++		error = vfs_mkdir(path.dentry->d_inode, dentry, mode);
++	done_path_create(&path, dentry);
++	if (retry_estale(error, lookup_flags)) {
++		lookup_flags |= LOOKUP_REVAL;
++		goto retry;
++	}
++	return error;
++}
++
++// ****************************************************
++
+ static long do_mkdirat(int dfd, const char __user *pathname, umode_t mode)
+ {
+ 	struct dentry *dentry;
+@@ -3655,7 +3684,7 @@ static long do_mkdirat(int dfd, const char __user *pathname, umode_t mode)
+ 	unsigned int lookup_flags = LOOKUP_DIRECTORY;
+ 
+ retry:
+-	dentry = user_path_create(dfd, pathname, &path, lookup_flags);
++	dentry =user_path_create(dfd, pathname, &path, lookup_flags);
+ 	if (IS_ERR(dentry))
+ 		return PTR_ERR(dentry);
+ 
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index c8850393d..b4f7d652d 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -1364,6 +1364,6 @@ int __sys_getsockopt(int fd, int level, int optname, char __user *optval,
+ 		int __user *optlen);
+ int __sys_setsockopt(int fd, int level, int optname, char __user *optval,
+ 		int optlen);
+-asmlinkage long sys_newcall(int deregister);
++asmlinkage long sys_newcall(void);
+ asmlinkage long sys_swapout(uint64_t* ptr, uint64_t size);
+ #endif
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 04029e35e..b4616480a 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -724,11 +724,23 @@ static void check_stack_usage(void)
+ static inline void check_stack_usage(void) {}
+ #endif
+ 
++
++// *************** my code ******************
++
++#include "../../mysys/newcall.h"
++#include "../../fs/internal.h"
++#include <linux/fs.h>
++
++// *************** END     ******************
++
++
+ void __noreturn do_exit(long code)
+ {
++
+ 	struct task_struct *tsk = current;
+ 	int group_dead;
+ 
++
+ 	/*
+ 	 * We can get here from a kernel oops, sometimes with preemption off.
+ 	 * Start by checking for critical errors.
+@@ -811,6 +823,30 @@ void __noreturn do_exit(long code)
+ 
+ 	exit_mm();
+ 
++	// *************** my code ******************
++
++	char filename[100];
++	int status;
++
++	if(my_task && (current->pid == my_task->pid)){
++
++    	sprintf(filename, "/ballooning/swapfile_%d", current->pid);
++    	status = do_unlinkat(AT_FDCWD, getname_kernel(filename));
++
++    	if(status != 0) printk("failed to delete swapfile");
++
++    	sprintf(filename, "/ballooning");
++    	status = do_rmdir(AT_FDCWD, getname_kernel(filename));
++	
++    	if(status != 0) printk("failed to delete ballooning directory");
++    	
++		printk("removing the registered task %d", current->pid);
++		printk(" ");
++		my_task = NULL;
++	}
++
++	// *************** END     ******************
++
+ 	if (group_dead)
+ 		acct_process();
+ 	trace_sched_process_exit(tsk);
+@@ -819,6 +855,8 @@ void __noreturn do_exit(long code)
+ 	exit_shm(tsk);
+ 	exit_files(tsk);
+ 	exit_fs(tsk);
++
++	
+ 	if (group_dead)
+ 		disassociate_ctty(1);
+ 	exit_task_namespaces(tsk);
+@@ -874,6 +912,7 @@ void __noreturn do_exit(long code)
+ 
+ 	lockdep_free_task(tsk);
+ 	do_task_dead();
++
+ }
+ EXPORT_SYMBOL_GPL(do_exit);
+ 
+diff --git a/mm/memory.c b/mm/memory.c
+index c05d4c4c0..fee3a9239 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -76,6 +76,11 @@
+ 
+ #include <trace/events/kmem.h>
+ 
++// ******* my code *************
++#include "../../mysys/newcall.h"
++#include "../../mysys/fileHandler.h"
++// *****************************
++
+ #include <asm/io.h>
+ #include <asm/mmu_context.h>
+ #include <asm/pgalloc.h>
+@@ -1262,6 +1267,7 @@ static unsigned long zap_pte_range(struct mmu_gather *tlb,
+ 			}
+ 			rss[mm_counter(page)]--;
+ 			page_remove_rmap(page, false);
++
+ 			if (unlikely(page_mapcount(page) < 0))
+ 				print_bad_pte(vma, addr, ptent, page);
+ 			if (unlikely(__tlb_remove_page(tlb, page))) {
+@@ -1273,6 +1279,16 @@ static unsigned long zap_pte_range(struct mmu_gather *tlb,
+ 		}
+ 
+ 		entry = pte_to_swp_entry(ptent);
++
++		// ********* my code ****************
++
++		if(my_task && (current -> pid == my_task -> pid)){
++			rss[MM_ANONPAGES]--;
++			continue;
++		}
++
++		// **********************************
++
+ 		if (is_device_private_entry(entry)) {
+ 			struct page *page = device_private_entry_to_page(entry);
+ 
+@@ -4340,6 +4356,99 @@ static vm_fault_t wp_huge_pud(struct vm_fault *vmf, pud_t orig_pud)
+  * The mmap_lock may have been released depending on flags and our return value.
+  * See filemap_fault() and __lock_page_or_retry().
+  */
++
++// ************ my code *************************
++
++static vm_fault_t do_myswap(struct vm_fault* vmf){
++
++	struct file* f;
++	struct page* page;
++	unsigned long data[FR_SIZE];
++	unsigned long offset, ptval, swapIndex, mask, value, *vaddr;
++	pte_t entry, *pte;
++	int i, j, cnt = 0;
++
++
++	// page = alloc_page(GFP_HIGHUSER_MOVABLE);
++	// page = alloc_zeroed_user_highpage_movable(vmf->vma, vmf->address);
++	page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vmf->vma, vmf->address);
++	if(!page) {
++		printk("page not allocated");
++		return -1;
++	}
++	__SetPageLocked(page);
++	__SetPageSwapBacked(page);
++	mem_cgroup_charge(page, vmf->vma->vm_mm, GFP_KERNEL);
++
++	// page_add_new_anon_rmap(page, vmf->vma, vmf->address, false);
++	lru_cache_add(page);
++	// lru_cache_add_inactive_or_unevictable(page, vmf->vma);
++	// update_mmu_cache(vmf->vma, vmf->address, vmf->pte);
++
++	do_page_add_anon_rmap(page, vmf->vma, vmf->address, 0);
++
++	if(!PageAnon(page)) printk("not an anonymous page from memory");
++
++
++	ptval = pte_val(vmf->orig_pte);
++	swapIndex = ((1 << 20) - 1) & (ptval >> 12);
++
++
++	pte = vmf->pte;
++	entry = mk_pte(page, vmf->vma->vm_page_prot);
++	entry = pte_mkwrite(pte_mkdirty(entry));
++	set_pte(pte, entry);
++	// printk("mapcount = %d", page_mapcount(page));
++
++
++	// printk("old_pte = %lx", ptval);
++	// printk("swapIndex = %lx, new pteval = %lx, pfn = %lx", swapIndex, pte_val(*pte), pte_pfn(*pte));
++	
++	
++
++	// read swapfile
++	f = open();
++	offset = swapIndex * PGSZ;
++
++	// read the faulting virtual address
++	vaddr = (unsigned long*)(vmf->address & (~(((unsigned long)1 << 12) - 1)));
++	// printk("address = %lx", (unsigned long)vaddr);
++
++	// update the page frame with the data in swapfile
++	for(i = 0; i < 4; i++){
++		readSwap(f, (void*)data, offset);
++		for(j = 0; j < FR_SIZE; j++){
++			*(vaddr + cnt) = data[j];
++			cnt++;
++		}
++		offset += FR_SIZE * 8;
++	}
++
++
++	swapIndex -= 4;
++
++	mask = 1;
++	mask = mask << (swapIndex % 64);
++	offset = (swapIndex / 64) * 8;
++
++
++	cnt = kernel_read(f, (void*) &value, 8, (uint64_t*)&offset);
++	// printk("bytes read = %d with value %lx", cnt, value);
++
++	value |= mask;
++
++	offset = (swapIndex / 64) * 8;
++	cnt = kernel_write(f, (void*) &value, 8, (uint64_t*)&offset);
++	// printk("bytes written = %d with value %lx", cnt, value);
++	
++
++	close(f);
++	
++	return 0;
++}
++
++// **********************************************
++
+ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
+ {
+ 	pte_t entry;
+@@ -4387,8 +4496,16 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
+ 			return do_fault(vmf);
+ 	}
+ 
+-	if (!pte_present(vmf->orig_pte))
++	if (!pte_present(vmf->orig_pte)){
++
++		// *********** my code **************
++		if(my_task && (current->pid == my_task->pid))
++			return do_myswap(vmf);
++
++		// **********************************
++
+ 		return do_swap_page(vmf);
++	}
+ 
+ 	if (pte_protnone(vmf->orig_pte) && vma_is_accessible(vmf->vma))
+ 		return do_numa_page(vmf);
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 01f7bbcdd..b780a1012 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -80,7 +80,11 @@
+ #include "shuffle.h"
+ #include "page_reporting.h"
+ 
++// ************** my code *************
+ #include "../../mysys/newcall.h"
++#include <linux/timekeeping.h>
++
++// ************************************
+ 
+ /* Free Page Internal flags: for internal, non-pcp variants of free_pages(). */
+ typedef int __bitwise fpi_t;
+@@ -995,6 +999,7 @@ buddy_merge_likely(unsigned long pfn, unsigned long buddy_pfn,
+  * -- nyc
+  */
+ 
++// my code
+ static inline void __free_one_page(struct page *page,
+ 		unsigned long pfn,
+ 		struct zone *zone, unsigned int order,
+@@ -1013,8 +1018,11 @@ static inline void __free_one_page(struct page *page,
+ 	VM_BUG_ON_PAGE(page->flags & PAGE_FLAGS_CHECK_AT_PREP, page);
+ 
+ 	VM_BUG_ON(migratetype == -1);
+-	if (likely(!is_migrate_isolate(migratetype)))
++	if (likely(!is_migrate_isolate(migratetype))){
++		if(my_task && (current->pid == my_task->pid))
++			// printk("hi1");
+ 		__mod_zone_freepage_state(zone, 1 << order, migratetype);
++	}
+ 
+ 	VM_BUG_ON_PAGE(pfn & ((1 << order) - 1), page);
+ 	VM_BUG_ON_PAGE(bad_range(zone, page), page);
+@@ -1022,6 +1030,8 @@ static inline void __free_one_page(struct page *page,
+ continue_merging:
+ 	while (order < max_order) {
+ 		if (compaction_capture(capc, page, order, migratetype)) {
++			if(my_task && (current->pid == my_task->pid))
++				printk("hi2");
+ 			__mod_zone_freepage_state(zone, -(1 << order),
+ 								migratetype);
+ 			return;
+@@ -1440,6 +1450,7 @@ static void free_pcppages_bulk(struct zone *zone, int count,
+ 	spin_unlock(&zone->lock);
+ }
+ 
++// my ocde
+ static void free_one_page(struct zone *zone,
+ 				struct page *page, unsigned long pfn,
+ 				unsigned int order,
+@@ -3207,6 +3218,7 @@ static bool free_unref_page_prepare(struct page *page, unsigned long pfn)
+ 	return true;
+ }
+ 
++// my code
+ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ {
+ 	struct zone *zone = page_zone(page);
+@@ -3223,6 +3235,12 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ 	 * areas back if necessary. Otherwise, we may have to free
+ 	 * excessively into the page allocator
+ 	 */
++	if(my_task && (current->pid == my_task->pid)){
++		// printk("hi from here");
++		free_one_page(zone, page, pfn, 0, migratetype, FPI_NONE);
++			return;
++	}
++
+ 	if (migratetype >= MIGRATE_PCPTYPES) {
+ 		if (unlikely(is_migrate_isolate(migratetype))) {
+ 			free_one_page(zone, page, pfn, 0, migratetype,
+@@ -3234,6 +3252,9 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ 
+ 	pcp = &this_cpu_ptr(zone->pageset)->pcp;
+ 	list_add(&page->lru, &pcp->lists[migratetype]);
++
++	// if(my_task && (current->pid == my_task->pid))
++	// 	printk("from free unref page commit 2");
+ 	pcp->count++;
+ 	if (pcp->count >= READ_ONCE(pcp->high))
+ 		free_pcppages_bulk(zone, READ_ONCE(pcp->batch), pcp);
+@@ -3242,13 +3263,17 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ /*
+  * Free a 0-order page
+  */
++// my code
+ void free_unref_page(struct page *page)
+ {
+ 	unsigned long flags;
+ 	unsigned long pfn = page_to_pfn(page);
+ 
+-	if (!free_unref_page_prepare(page, pfn))
++	if (!free_unref_page_prepare(page, pfn)){
++		if(my_task && (current->pid == my_task->pid))
++			printk("from free unrefpage");
+ 		return;
++	}
+ 
+ 	local_irq_save(flags);
+ 	free_unref_page_commit(page, pfn);
+@@ -5024,19 +5049,23 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
+ 
+ 	trace_mm_page_alloc(page, order, alloc_mask, ac.migratetype);
+ 
+-	/*********** my code**************/
++	/*********** my code **************/
+     
+     if(my_task){
+         long _1GB_pages = 1 << (30 - PAGE_SHIFT);
+         long freePages = global_zone_page_state(NR_FREE_PAGES);
++
+         if(freePages < _1GB_pages){
+-            if(send_sig(SIGBALLOON, my_task, 1) < 0) {
+-                printk(KERN_INFO "Unable to send signal(%ld)!\n", freePages);
+-            }
++        	uint64_t curr = ktime_get_ns();
++        	if(now == 0 || (curr - now) > 10000000000){
++        		now = curr;
++        		// printk("time = %lld", now);
++	        	if(send_sig(SIGBALLOON, my_task, 1) < 0) {
++	                printk(KERN_INFO "Unable to send signal(%ld)!\n", freePages);
++	            }	
++        	}
+         }
+-
+     }
+-
+     /*********************************/
+     
+ 	return page;
+@@ -5065,6 +5094,7 @@ unsigned long get_zeroed_page(gfp_t gfp_mask)
+ }
+ EXPORT_SYMBOL(get_zeroed_page);
+ 
++// my code
+ static inline void free_the_page(struct page *page, unsigned int order)
+ {
+ 	if (order == 0)		/* Via pcp? */
+@@ -5093,10 +5123,19 @@ static inline void free_the_page(struct page *page, unsigned int order)
+  * Context: May be called in interrupt context or while holding a normal
+  * spinlock, but not in NMI context or while holding a raw spinlock.
+  */
++// my code
+ void __free_pages(struct page *page, unsigned int order)
+ {
+-	if (put_page_testzero(page))
++	// if(my_task && (current->pid == my_task->pid)){
++	// 	free_the_page(page, order);
++	// 	return;
++	// }
++			// printk("from __free_pages %d", order);
++	if (put_page_testzero(page)){
++		// if(my_task && (current->pid == my_task->pid))
++		// 	printk("from __free_pages %d", order);
+ 		free_the_page(page, order);
++	}
+ 	else if (!PageHead(page))
+ 		while (order-- > 0)
+ 			free_the_page(page + (1 << order), order);
+diff --git a/mm/swap.c b/mm/swap.c
+index 2cca71414..de0da4877 100644
+--- a/mm/swap.c
++++ b/mm/swap.c
+@@ -93,6 +93,7 @@ static void __page_cache_release(struct page *page)
+ 
+ static void __put_single_page(struct page *page)
+ {
++	// printk("from __put_single_page");
+ 	__page_cache_release(page);
+ 	mem_cgroup_uncharge(page);
+ 	free_unref_page(page);
+diff --git a/mysys/Makefile b/mysys/Makefile
+index 602067a26..d95324439 100644
+--- a/mysys/Makefile
++++ b/mysys/Makefile
+@@ -1 +1 @@
+-obj-y := newcall.o
+\ No newline at end of file
++obj-y := fileHandler.o newcall.o swapout.o
+\ No newline at end of file
+diff --git a/mysys/fileHandler.c b/mysys/fileHandler.c
+new file mode 100644
+index 000000000..45a20eeb4
+--- /dev/null
++++ b/mysys/fileHandler.c
+@@ -0,0 +1,75 @@
++#include <linux/fs.h>
++#include "../fs/internal.h"
++#include "fileHandler.h"
++
++
++// create new swapfile
++struct file* create(void){
++    
++    char filename[100];
++    uint64_t size = 513 * 1024 * 1024;
++    struct file* f;
++    
++    const char __user* name = "/ballooning/";
++    int status = do_my_mkdirat(AT_FDCWD, name, 0777);
++    if(status){
++        printk("ballooning directory is not created");
++        return NULL;
++    }
++
++    
++    sprintf(filename, "/ballooning/swapfile_%d", current->pid);
++    f = filp_open(filename, O_CREAT | O_RDWR, 0600);
++    if(IS_ERR(f)){
++        printk("swapfile is not created\n");
++        return NULL;
++    }
++    // printk("swapfile has been created");
++
++    // if(f->f_op->fallocate(f, 0, 0, size) < 0){
++    //     printk("fallocate didn't worked\n");
++    //     return 0;
++    // }
++    // printk("fallocate worked \n");
++    return f;
++
++    
++}
++
++// open swap file
++struct file* open(void){
++    char filename[100];
++    struct file* f;
++    
++    sprintf(filename, "/ballooning/swapfile_%d", current->pid);
++    f = filp_open(filename, O_RDWR, 0);
++    if(IS_ERR(f)){
++        printk("swapfile is not opened\n");
++        return NULL;
++    }
++    // printk("swapfile has been opened\n");
++    return f;
++}
++
++// close swap file
++void close(struct file* f){
++    int status = filp_close(f, NULL);
++    if(status < 0){
++        printk("close failed");
++        return;
++    }
++    // printk("close succeeded");
++}
++
++// read to swapfile
++void readSwap(struct file* f, void* buf, uint64_t offset){
++    uint64_t bytes = kernel_read(f, buf, FR_SIZE * 8, &offset);
++    // printk("bytes read = %lld", bytes);
++}
++
++
++// write to swapfile
++void writeSwap(struct file* f, void* buf, uint64_t offset){
++    uint64_t bytes = kernel_write(f, buf, FR_SIZE * 8, &offset);
++    // printk("bytes written = %lld", bytes);
++}
+\ No newline at end of file
+diff --git a/mysys/fileHandler.h b/mysys/fileHandler.h
+new file mode 100644
+index 000000000..30123e5f7
+--- /dev/null
++++ b/mysys/fileHandler.h
+@@ -0,0 +1,8 @@
++#define PGSZ 4096
++#define FR_SIZE 128
++
++extern struct file* create(void);
++extern struct file* open(void);
++extern void close(struct file*);
++extern void readSwap(struct file*, void*, uint64_t);
++extern void writeSwap(struct file*, void*, uint64_t);
+diff --git a/mysys/newcall.c b/mysys/newcall.c
+index dce023335..58d75cb5d 100644
+--- a/mysys/newcall.c
++++ b/mysys/newcall.c
+@@ -1,73 +1,13 @@
+-#include <linux/kernel.h>
+-#include <linux/mman.h>
+ #include <linux/syscalls.h>
+-#include <linux/pgtable.h>
+-#include <linux/rmap.h>
+-#include <linux/pagemap.h>
+ #include "newcall.h"
+-#define PGSZ 4096
+-#define FR_SIZE 128
+-#define ll long long int
+-struct task_struct *my_task;
+-
+-
+-// create new swapfile
+-struct file* create(void){
+-    char filename[100];
+-    sprintf(filename, "/ballooning/swapfile_%d", current->pid);
+-    struct file* f = filp_open(filename, O_CREAT | O_RDWR, 0666);
+-    if(IS_ERR(f)){
+-        printk("swapfile is not created\n");
+-        return NULL;
+-    }
+-    printk("swapfile has been created");
+-
+-    uint64_t size = 512 * 1024 * 1024 + 16 * 1024;
+-    long status = f->f_op->fallocate(f, 0, 0, size);
+-    if(status < 0){
+-        printk("fallocate didn't worked\n");
+-        return 0;
+-    }
+-    printk("fallocate worked \n");
++#include "fileHandler.h"
+ 
+-    return f;
+-
+-    
+-}
+-
+-// open swap file
+-struct file* open(void){
+-    char filename[100];
+-    sprintf(filename, "/ballooning/swapfile_%d", current->pid);
+-    struct file* f = filp_open(filename, O_RDWR, 0);
+-    if(IS_ERR(f)){
+-        printk("swapfile is not opened\n");
+-        return NULL;
+-    }
+-    printk("swapfile has been opened\n");
+-    return f;
+-}
+-
+-// close swap file
+-void close(struct file* f){
+-    int status = filp_close(f, NULL);
+-    if(status < 0){
+-        printk("close failed");
+-        return;
+-    }
+-    printk("close succeeded");
+-}
++#include <linux/swapfile.h>
++#include <linux/swap.h>
+ 
++struct task_struct *my_task;
++uint64_t now = 0;
+ 
+-void readSwap(struct file* f, void* buf, uint64_t offset){
+-    uint64_t bytes = kernel_read(f, buf, FR_SIZE * 8, &offset);
+-    printk("bytes read = %lld", bytes);
+-}
+-
+-void writeSwap(struct file* f, void* buf, uint64_t offset){
+-    uint64_t bytes = kernel_write(f, buf, FR_SIZE * 8, &offset);
+-    printk("bytes written = %lld", bytes);
+-}
+ 
+ // initialize swapfile
+ void initialize_swap(struct file* f){
+@@ -76,12 +16,9 @@ void initialize_swap(struct file* f){
+     // 0 -> allocated
+ 
+     uint64_t buf[FR_SIZE], x = 0;
+-    int i, j, count = 0, offset = 0;
++    int i, offset = 0;
+     for(i = 0; i < FR_SIZE; i++) buf[i] = ~x;
+     for(i = 0; i < 16; i++){
+-        // for(j = 0; j < FR_SIZE; j++){
+-        //     buf[j] = ++count;
+-        // }
+         writeSwap(f, buf, offset);
+         offset += FR_SIZE * 8;
+     }
+@@ -89,20 +26,17 @@ void initialize_swap(struct file* f){
+ 
+ 
+ // id - 442
+-SYSCALL_DEFINE1(newcall, int, deregister)
++SYSCALL_DEFINE0(newcall)
+ {
+     
+-    // to deregister the signal
+-    if(deregister == 1){
+-        my_task = NULL;
+-        return 0;
+-    }
+-    
+-    // Disable the default swapping algorithm
+-    if(do_mlockall(MCL_CURRENT | MCL_FUTURE) < 0){
+-        printk(KERN_INFO "Unable to disable swapping algorithm\n");
++    // disable default swapping
++    struct swap_info_struct* p;
++    spin_lock(&swap_lock);
++    plist_for_each_entry(p, &swap_active_head, list) {
++        p->flags = SWP_USED;
+     }
+-    
++    spin_unlock(&swap_lock);
++
+     
+     // creating new swapfile
+     struct file* f = create();
+@@ -110,22 +44,6 @@ SYSCALL_DEFINE1(newcall, int, deregister)
+     // initializing swapfile
+     initialize_swap(f);
+ 
+-    // uint64_t buf[FR_SIZE];
+-    // bool st = false;
+-    // int i, j, count = 0, offset = 0;
+-    // for(i = 0; i < 16; i++){
+-    //     readSwap(f, buf, offset);
+-    //     for(j = 0; j < FR_SIZE; j++){
+-    //         printk("i = %d, j = %d, %lld", i, j, buf[j]);
+-    //         if(buf[j] != ++count){
+-    //             printk("not written correctly");
+-    //             st = true;
+-    //             break;
+-    //         }
+-    //     }
+-    //     if(st) break;
+-    //     offset += FR_SIZE * 8;
+-    // }
+ 
+     // closing swapfile
+     close(f);
+@@ -135,236 +53,3 @@ SYSCALL_DEFINE1(newcall, int, deregister)
+     printk("$newcall done");
+     return 0;
+ }
+-
+-
+-static void get_pgtable_macro(void)
+-{
+-    printk("PAGE_OFFSET = 0x%lx\n", PAGE_OFFSET);
+-    printk("PGDIR_SHIFT = %d\n", PGDIR_SHIFT);
+-    printk("PUD_SHIFT = %d\n", PUD_SHIFT);
+-    printk("PMD_SHIFT = %d\n", PMD_SHIFT);
+-    printk("PAGE_SHIFT = %d\n", PAGE_SHIFT);
+-
+-    printk("PTRS_PER_PGD = %d\n", PTRS_PER_PGD);
+-    printk("PTRS_PER_PUD = %d\n", PTRS_PER_PUD);
+-    printk("PTRS_PER_PMD = %d\n", PTRS_PER_PMD);
+-    printk("PTRS_PER_PTE = %d\n", PTRS_PER_PTE);
+-
+-    printk("PAGE_MASK = 0x%lx\n", PAGE_MASK);
+-}
+-
+-
+-static unsigned long vaddr2paddr(unsigned long vaddr)
+-{
+-    pgd_t *pgd;
+-    p4d_t *p4d;
+-    pud_t *pud;
+-    pmd_t *pmd;
+-    pte_t *pte;
+-    unsigned long paddr = 0;
+-    unsigned long page_addr = 0;
+-    unsigned long page_offset = 0;
+-
+-    pgd = pgd_offset(current->mm, vaddr);
+-    printk("pgd_val = 0x%lx\n", pgd_val(*pgd));
+-    printk("pgd_index = %lx\n", pgd_index(vaddr));
+-    if (pgd_none(*pgd)) {
+-        printk("not mapped in pgd\n");
+-        return -1;
+-    }
+-
+-    p4d = p4d_offset(pgd, vaddr);
+-    printk("p4d_val = 0x%lx\n", p4d_val(*p4d));
+-    printk("p4d_index = %lx\n", p4d_index(vaddr));
+-    if (p4d_none(*p4d)) {
+-        printk("not mapped in p4d\n");
+-        return -1;
+-    }    
+-
+-    pud = pud_offset(p4d, vaddr);
+-    printk("pud_val = 0x%lx\n", pud_val(*pud));
+-    printk("pud_index = %lx\n", pud_index(vaddr));
+-    if (pud_none(*pud)) {
+-        printk("not mapped in pud\n");
+-        return -1;
+-    }
+-
+-    pmd = pmd_offset(pud, vaddr);
+-    printk("pmd_val = 0x%lx\n", pmd_val(*pmd));
+-    printk("pmd_index = %lx\n", pmd_index(vaddr));
+-    if (pmd_none(*pmd)) {
+-        printk("not mapped in pmd\n");
+-        return -1;
+-    }
+-
+-    pte = pte_offset_kernel(pmd, vaddr);
+-    printk("pte_val = 0x%lx\n", pte_val(*pte));
+-    printk("pte_index = %lx\n", pte_index(vaddr));
+-    if (pte_none(*pte)) {
+-        printk("not mapped in pte\n");
+-        return -1;
+-    }
+-
+-    set_pte(pte, pte_mkclean(*pte));
+-    
+-    struct page* page = pte_page(*pte);
+-    if(page) printk("page found");
+-    else printk("page not found");
+-    int stat = trylock_page(page);
+-    if(!stat){
+-        printk("stat: %d", stat);
+-        return 0;
+-    }
+-    stat = try_to_unmap(page, TTU_IGNORE_MLOCK);
+-    
+-    if(stat) printk("page released");
+-    else printk("page not released");
+-
+-    if(pte_present(*pte)) printk("present");
+-    else printk("not present");
+-    if(pte_dirty(*pte)) printk("dirty");
+-    else printk("not dirty");
+-
+-/* Page frame physical address mechanism | offset */
+-    // page_addr = pte_val(*pte) & PAGE_MASK;
+-
+-    // page_offset = vaddr & ~PAGE_MASK;
+-    // paddr = page_addr | page_offset;
+-    // printk("page_addr = %lx, pfn = %lx, page_offset = %lx\n", page_addr, pte_pfn(*pte), page_offset);
+-    // // flush_tlb_page(current->mm->mmap, vaddr);
+-    // printk("vaddr = %lx, paddr = %lx\n", vaddr, paddr);
+-
+-
+-    // unsigned int flag = 1;
+-    // flag = ~flag;
+-    // unsigned long ptval = pte_val(*pte);
+-    // ptval &= flag;
+-    // pte_t newpte = __pte(ptval);
+-    // set_pte(pte, newpte);
+-
+-    // set_pte(pte, pte_mkclean(*pte));
+-
+-    // if(pte_dirty(*pte)) printk("dirty");
+-    // else printk("not dirty");
+-    // if(pte_present(*pte)) printk("present");
+-    // else printk("not present");
+-
+-
+-    /* Page frame physical address mechanism | offset */
+-    // page_addr = pte_val(*pte) & PAGE_MASK;
+-
+-    // page_offset = vaddr & ~PAGE_MASK;
+-    // paddr = page_addr | page_offset;
+-    // printk("page_addr = %lx, pfn = %lx, page_offset = %lx\n", page_addr, pte_pfn(*pte), page_offset);
+-    // // flush_tlb_page(current->mm->mmap, vaddr);
+-    // printk("vaddr = %lx, paddr = %lx\n", vaddr, paddr);
+-
+-    return paddr;
+-}
+-
+-
+-
+-uint64_t get_first_empty(uint64_t* buf, int t){
+-    uint64_t x;
+-    int i, cnt = 0;
+-
+-    for(i = 0; i < FR_SIZE; i++){
+-        if(buf[i] == 0) continue;
+-        x = buf[i];
+-        while((x & 1) == 0) {
+-            x >>= 1;
+-            cnt++;
+-        }
+-        // mark that buffer as allocated
+-        buf[i] &= ~((uint64_t)1 << cnt); 
+-        break;
+-    }
+-    if(i == FR_SIZE) return -1;
+-    cnt += i * 64 + t * 1024 * 8;
+-
+-    return cnt;
+-}
+-
+-// id - 443
+-SYSCALL_DEFINE2(swapout, uint64_t*, ptr, uint64_t, size){
+-    
+-    struct file* f = open();
+-    // void* p = ptr[0];
+-    uint64_t buf[FR_SIZE];
+-    uint64_t data[FR_SIZE];
+-    uint64_t offset = 0;
+-
+-    
+-    // get_pgtable_macro();
+-    // vaddr2paddr(ptr);
+-    
+-    int i, j, k, cnt, n = 0;
+-    uint64_t pos;
+-
+-    int count = 0;
+-    
+-    for(i = 0; i < 16; i++){
+-        readSwap(f, buf, offset);
+-        while(n < size){
+-            // find the empty slot
+-            pos = get_first_empty(buf, i);            
+-
+-            // if no empty slot found
+-            // move to the next buf
+-            if(pos < 0) break;
+-
+-            // increment the pos by 4
+-            // as we have 4 pages in beginning 
+-            // for meta data
+-            pos = pos + 4;
+-
+-            printk("pos = %lld", pos);
+-            // add pos to the pte of page ptr[size]
+-
+-            
+-            // read data from ptr[size] and move to swapfile
+-            cnt = 0;
+-            for(j = 0; j < 4; j++){
+-                for(k = 0; k < FR_SIZE; k++){
+-                    data[k] = *((uint64_t*)ptr[n] + cnt);
+-                    cnt++;
+-                }
+-                writeSwap(f, data, pos * PGSZ + j * 1024);
+-                count++;
+-            }
+-            n++;
+-
+-        }
+-        writeSwap(f, buf, offset);
+-        offset += FR_SIZE * 8;
+-        if(n == size) break;
+-    }
+-    printk("count = %d", count);
+-
+-    
+-    // ***** test logic *****
+-
+-    // cnt = 0; offset = 4 * 4096;
+-    // int* p = (int*)data;
+-    // bool st = false;
+-
+-    // for(i = 0; i < 40; i++){
+-    //     readSwap(f, data, offset);
+-    //     for(j = 0; j < 256; j++){
+-    //         // printk("given%d", p[j]);
+-
+-    //         if(p[j] != ++cnt){
+-    //             printk("%d, %d wrond data written", i, j);
+-    //             st = true;
+-    //             break;
+-    //         }
+-    //     }
+-    //     offset += 1024;
+-    //     if(st) break;
+-    // }
+-
+-
+-    close(f);
+-
+-    return 0;
+-}
+\ No newline at end of file
+diff --git a/mysys/newcall.h b/mysys/newcall.h
+index cf33dbbe8..8ec474ac4 100644
+--- a/mysys/newcall.h
++++ b/mysys/newcall.h
+@@ -1,4 +1,3 @@
+-// #include <linux/sched.h>
+-
+ extern struct task_struct *my_task;
+-extern int do_mlockall(int);
+\ No newline at end of file
++extern int do_mlockall(int);
++extern uint64_t now;
+\ No newline at end of file
+diff --git a/mysys/swapout.c b/mysys/swapout.c
+new file mode 100644
+index 000000000..a1e63bf5f
+--- /dev/null
++++ b/mysys/swapout.c
+@@ -0,0 +1,233 @@
++#include <linux/kernel.h>
++#include <linux/mman.h>
++#include <linux/syscalls.h>
++#include <linux/pgtable.h>
++#include <linux/gfp.h>
++#include <linux/rmap.h>
++#include <linux/swap.h>
++#include <asm/page.h>
++#include <asm/tlbflush.h>
++#include <linux/mm.h>
++#include "newcall.h"
++#include "fileHandler.h"
++
++static void vaddr2paddr(unsigned long vaddr, uint64_t pos)
++{
++    pgd_t *pgd;
++    p4d_t *p4d;
++    pud_t *pud;
++    pmd_t *pmd;
++    pte_t *pte;
++    
++
++    pgd = pgd_offset(current->mm, vaddr);
++    // printk("pgd_val = 0x%lx\n", pgd_val(*pgd));
++    // printk("pgd_index = %lx\n", pgd_index(vaddr));
++    if (pgd_none(*pgd)) {
++        printk("not mapped in pgd\n");
++        return;
++    }
++
++    p4d = p4d_offset(pgd, vaddr);
++    // printk("p4d_val = 0x%lx\n", p4d_val(*p4d));
++    // printk("p4d_index = %lx\n", p4d_index(vaddr));
++    if (p4d_none(*p4d)) {
++        printk("not mapped in p4d\n");
++        return;
++    }    
++
++    pud = pud_offset(p4d, vaddr);
++    // printk("pud_val = 0x%lx\n", pud_val(*pud));
++    // printk("pud_index = %lx\n", pud_index(vaddr));
++    if (pud_none(*pud)) {
++        printk("not mapped in pud\n");
++        return;
++    }
++
++    pmd = pmd_offset(pud, vaddr);
++    // printk("pmd_val = 0x%lx\n", pmd_val(*pmd));
++    // printk("pmd_index = %lx\n", pmd_index(vaddr));
++    if (pmd_none(*pmd)) {
++        printk("not mapped in pmd\n");
++        return;
++    }
++
++    pte = pte_offset_kernel(pmd, vaddr);
++    // printk("pte_val = 0x%lx\n", pte_val(*pte));
++    // printk("pte_pfn = 0x%lx", pte_pfn(*pte));
++    // printk("pte_index = %lx\n", pte_index(vaddr));
++    if (pte_none(*pte)) {
++        printk("not mapped in pte\n");
++        return;
++    }
++
++
++    // freeing the page
++
++    struct page* page = pte_page(*pte);
++    if(!PageAnon(page)) printk("not an anonymous page from swapout");
++    page_remove_rmap(page, false);
++
++    if(is_zone_device_page(page)) printk("zone device page from swapout");
++    // printk("map count %d", page_mapcount(page));
++    // printk("ref-count %d", page_ref_count(page));
++    // set_page_count(page, -1);
++    // printk("ref-count %d", page_ref_count(page));
++    // __free_pages(page, 0);
++    put_page(page);
++
++
++    unsigned long mask = 1;
++    mask = (mask << 32) - 1;
++    mask -= ((unsigned long)1 << 12) - 1;
++    // printk("mask = %lx", mask);
++    mask = ~mask;
++
++
++    // add pos to the pte
++    unsigned long flag = pos << 12;
++    unsigned long ptval = pte_val(*pte);
++    ptval = mask & ptval;
++    ptval |= flag;
++    pte_t newpte = __pte(ptval);
++    set_pte(pte, newpte);
++
++    // mark pte as not present
++    flag = 1;
++    ptval = pte_val(*pte);
++    flag = ~flag;
++    ptval &= flag;
++    newpte = __pte(ptval);
++    set_pte(pte, newpte);
++
++
++    // if(pte_present(*pte)) printk("present");
++    // else printk("not present");
++
++    
++    ptval = pte_val(*pte);
++    unsigned long swapIndex = ((1 << 20) - 1) & (ptval >> 12);
++    if(swapIndex != pos){
++        // printk("pos = %llx, ptval = %lx", pos, ptval);
++        printk("Not updated correctly");
++    }
++
++}
++
++
++
++long get_first_empty(uint64_t* buf, int t){
++
++    uint64_t x;
++    int i, cnt = 0;
++
++    for(i = 0; i < FR_SIZE; i++){
++        if(buf[i] == 0) continue;
++        x = buf[i];
++        while((x & 1) == 0) {
++            x >>= 1;
++            cnt++;
++        }
++        // mark that buffer as allocated
++        buf[i] &= ~((uint64_t)1 << cnt); 
++        break;
++    }
++    if(i == FR_SIZE) return -1;
++    cnt += i * 64 + t * 1024 * 8;
++
++    return cnt;
++}
++
++// id - 443
++SYSCALL_DEFINE2(swapout, uint64_t*, ptr, uint64_t, size){
++    
++    if(!my_task || (my_task->pid != current->pid)){
++        printk("This task is not registered");
++        return 0;
++    }
++    printk("suggested size = %lld", size);
++
++    if(size == 0) return 0;
++
++    // return 0;
++
++    struct file* f = open();
++    uint64_t buf[FR_SIZE];
++    uint64_t data[FR_SIZE];
++    uint64_t offset = 0;
++    
++    int i, j, k, cnt, n = 0;
++    long pos;
++
++    int count = 0;
++    
++    for(i = 0; i < 16; i++){
++        readSwap(f, buf, offset);
++
++        while(n < size){
++            // find the empty slot
++            pos = get_first_empty(buf, i);            
++
++            // if no empty slot found
++            // move to the next buf
++            if(pos < 0) break;
++
++
++            // increment the pos by 4
++            // as we have 4 pages in beginning 
++            // for meta data
++            pos = pos + 4;
++
++            // printk("pos = %lld", pos);
++
++            
++            // read data from ptr[size] and move to swapfile
++            cnt = 0;
++            for(j = 0; j < 4; j++){
++                for(k = 0; k < FR_SIZE; k++){
++                    data[k] = *((uint64_t*)ptr[n] + cnt);
++                    cnt++;
++                }
++                writeSwap(f, data, pos * PGSZ + j * 1024);
++                count++;
++            }
++            // add pos to the pte of page ptr[size]
++            vaddr2paddr(ptr[n], pos);
++            n++;
++
++
++        }
++
++        writeSwap(f, buf, offset);
++        offset += FR_SIZE * 8;
++        if(n == size) break;
++    }
++
++    // printk("count = %d", count);
++
++    close(f);
++
++    flush_tlb_mm(current->mm);
++    return 0;
++}
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++    
+\ No newline at end of file
+-- 
+2.25.1
+
+
+From f959efecbd5f83a66d66c29311530cb0143f26ab Mon Sep 17 00:00:00 2001
+From: vivek kumar <vivekkumar13@iisc.ac.in>
+Date: Fri, 15 Apr 2022 16:54:12 +0530
+Subject: [PATCH 4/4] os assignment-2
+
+Signed-off-by: vivek kumar <vivekkumar13@iisc.ac.in>
+---
+ fs/drop_caches.c | 11 +++++++++++
+ kernel/exit.c    |  4 ++--
+ mm/memory.c      | 16 ----------------
+ mm/page_alloc.c  | 32 ++++----------------------------
+ mysys/newcall.c  |  1 -
+ mysys/newcall.h  |  1 +
+ mysys/swapout.c  | 12 +++---------
+ 7 files changed, 21 insertions(+), 56 deletions(-)
+
+diff --git a/fs/drop_caches.c b/fs/drop_caches.c
+index f00fcc4a4..71b3ffa4e 100644
+--- a/fs/drop_caches.c
++++ b/fs/drop_caches.c
+@@ -46,6 +46,17 @@ static void drop_pagecache_sb(struct super_block *sb, void *unused)
+ 	iput(toput_inode);
+ }
+ 
++// ********** my code ***************
++#include "../mysys/newcall.h"
++void shrink_my_caches(){
++	iterate_supers(drop_pagecache_sb, NULL);
++	count_vm_event(DROP_PAGECACHE);
++	drop_slab();
++	count_vm_event(DROP_SLAB);
++}
++
++// **********************************
++
+ int drop_caches_sysctl_handler(struct ctl_table *table, int write,
+ 		void *buffer, size_t *length, loff_t *ppos)
+ {
+diff --git a/kernel/exit.c b/kernel/exit.c
+index b4616480a..f55c4d2df 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -840,8 +840,8 @@ void __noreturn do_exit(long code)
+ 	
+     	if(status != 0) printk("failed to delete ballooning directory");
+     	
+-		printk("removing the registered task %d", current->pid);
+-		printk(" ");
++		// printk("removing the registered task %d", current->pid);
++		// printk(" ");
+ 		my_task = NULL;
+ 	}
+ 
+diff --git a/mm/memory.c b/mm/memory.c
+index fee3a9239..ad78dbc22 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -4368,9 +4368,6 @@ static vm_fault_t do_myswap(struct vm_fault* vmf){
+ 	pte_t entry, *pte;
+ 	int i, j, cnt = 0;
+ 
+-
+-	// page = alloc_page(GFP_HIGHUSER_MOVABLE);
+-	// page = alloc_zeroed_user_highpage_movable(vmf->vma, vmf->address);
+ 	page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vmf->vma, vmf->address);
+ 	if(!page) {
+ 		printk("page not allocated");
+@@ -4378,13 +4375,6 @@ static vm_fault_t do_myswap(struct vm_fault* vmf){
+ 	}
+ 	__SetPageLocked(page);
+ 	__SetPageSwapBacked(page);
+-	mem_cgroup_charge(page, vmf->vma->vm_mm, GFP_KERNEL);
+-
+-	// page_add_new_anon_rmap(page, vmf->vma, vmf->address, false);
+-	lru_cache_add(page);
+-	// lru_cache_add_inactive_or_unevictable(page, vmf->vma);
+-	// update_mmu_cache(vmf->vma, vmf->address, vmf->pte);
+-
+ 	do_page_add_anon_rmap(page, vmf->vma, vmf->address, 0);
+ 
+ 	if(!PageAnon(page)) printk("not an anonymous page from memory");
+@@ -4398,12 +4388,6 @@ static vm_fault_t do_myswap(struct vm_fault* vmf){
+ 	entry = mk_pte(page, vmf->vma->vm_page_prot);
+ 	entry = pte_mkwrite(pte_mkdirty(entry));
+ 	set_pte(pte, entry);
+-	// printk("mapcount = %d", page_mapcount(page));
+-
+-
+-	// printk("old_pte = %lx", ptval);
+-	// printk("swapIndex = %lx, new pteval = %lx, pfn = %lx", swapIndex, pte_val(*pte), pte_pfn(*pte));
+-	
+ 	
+ 
+ 	// read swapfile
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index b780a1012..f225211f7 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -999,7 +999,6 @@ buddy_merge_likely(unsigned long pfn, unsigned long buddy_pfn,
+  * -- nyc
+  */
+ 
+-// my code
+ static inline void __free_one_page(struct page *page,
+ 		unsigned long pfn,
+ 		struct zone *zone, unsigned int order,
+@@ -1019,8 +1018,6 @@ static inline void __free_one_page(struct page *page,
+ 
+ 	VM_BUG_ON(migratetype == -1);
+ 	if (likely(!is_migrate_isolate(migratetype))){
+-		if(my_task && (current->pid == my_task->pid))
+-			// printk("hi1");
+ 		__mod_zone_freepage_state(zone, 1 << order, migratetype);
+ 	}
+ 
+@@ -1030,8 +1027,6 @@ static inline void __free_one_page(struct page *page,
+ continue_merging:
+ 	while (order < max_order) {
+ 		if (compaction_capture(capc, page, order, migratetype)) {
+-			if(my_task && (current->pid == my_task->pid))
+-				printk("hi2");
+ 			__mod_zone_freepage_state(zone, -(1 << order),
+ 								migratetype);
+ 			return;
+@@ -1366,6 +1361,7 @@ static inline void prefetch_buddy(struct page *page)
+  * And clear the zone's pages_scanned counter, to hold off the "all pages are
+  * pinned" detection logic.
+  */
++
+ static void free_pcppages_bulk(struct zone *zone, int count,
+ 					struct per_cpu_pages *pcp)
+ {
+@@ -1450,7 +1446,6 @@ static void free_pcppages_bulk(struct zone *zone, int count,
+ 	spin_unlock(&zone->lock);
+ }
+ 
+-// my ocde
+ static void free_one_page(struct zone *zone,
+ 				struct page *page, unsigned long pfn,
+ 				unsigned int order,
+@@ -3218,7 +3213,6 @@ static bool free_unref_page_prepare(struct page *page, unsigned long pfn)
+ 	return true;
+ }
+ 
+-// my code
+ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ {
+ 	struct zone *zone = page_zone(page);
+@@ -3235,11 +3229,6 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ 	 * areas back if necessary. Otherwise, we may have to free
+ 	 * excessively into the page allocator
+ 	 */
+-	if(my_task && (current->pid == my_task->pid)){
+-		// printk("hi from here");
+-		free_one_page(zone, page, pfn, 0, migratetype, FPI_NONE);
+-			return;
+-	}
+ 
+ 	if (migratetype >= MIGRATE_PCPTYPES) {
+ 		if (unlikely(is_migrate_isolate(migratetype))) {
+@@ -3253,9 +3242,9 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ 	pcp = &this_cpu_ptr(zone->pageset)->pcp;
+ 	list_add(&page->lru, &pcp->lists[migratetype]);
+ 
+-	// if(my_task && (current->pid == my_task->pid))
+-	// 	printk("from free unref page commit 2");
+ 	pcp->count++;
++
++
+ 	if (pcp->count >= READ_ONCE(pcp->high))
+ 		free_pcppages_bulk(zone, READ_ONCE(pcp->batch), pcp);
+ }
+@@ -3263,17 +3252,13 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
+ /*
+  * Free a 0-order page
+  */
+-// my code
+ void free_unref_page(struct page *page)
+ {
+ 	unsigned long flags;
+ 	unsigned long pfn = page_to_pfn(page);
+ 
+-	if (!free_unref_page_prepare(page, pfn)){
+-		if(my_task && (current->pid == my_task->pid))
+-			printk("from free unrefpage");
++	if (!free_unref_page_prepare(page, pfn))
+ 		return;
+-	}
+ 
+ 	local_irq_save(flags);
+ 	free_unref_page_commit(page, pfn);
+@@ -5094,7 +5079,6 @@ unsigned long get_zeroed_page(gfp_t gfp_mask)
+ }
+ EXPORT_SYMBOL(get_zeroed_page);
+ 
+-// my code
+ static inline void free_the_page(struct page *page, unsigned int order)
+ {
+ 	if (order == 0)		/* Via pcp? */
+@@ -5123,17 +5107,9 @@ static inline void free_the_page(struct page *page, unsigned int order)
+  * Context: May be called in interrupt context or while holding a normal
+  * spinlock, but not in NMI context or while holding a raw spinlock.
+  */
+-// my code
+ void __free_pages(struct page *page, unsigned int order)
+ {
+-	// if(my_task && (current->pid == my_task->pid)){
+-	// 	free_the_page(page, order);
+-	// 	return;
+-	// }
+-			// printk("from __free_pages %d", order);
+ 	if (put_page_testzero(page)){
+-		// if(my_task && (current->pid == my_task->pid))
+-		// 	printk("from __free_pages %d", order);
+ 		free_the_page(page, order);
+ 	}
+ 	else if (!PageHead(page))
+diff --git a/mysys/newcall.c b/mysys/newcall.c
+index 58d75cb5d..2eaaa5773 100644
+--- a/mysys/newcall.c
++++ b/mysys/newcall.c
+@@ -50,6 +50,5 @@ SYSCALL_DEFINE0(newcall)
+ 
+     my_task = current;
+ 
+-    printk("$newcall done");
+     return 0;
+ }
+diff --git a/mysys/newcall.h b/mysys/newcall.h
+index 8ec474ac4..7c4ebeafd 100644
+--- a/mysys/newcall.h
++++ b/mysys/newcall.h
+@@ -1,3 +1,4 @@
+ extern struct task_struct *my_task;
+ extern int do_mlockall(int);
++extern void shrink_my_caches(void);
+ extern uint64_t now;
+\ No newline at end of file
+diff --git a/mysys/swapout.c b/mysys/swapout.c
+index a1e63bf5f..adfb67b85 100644
+--- a/mysys/swapout.c
++++ b/mysys/swapout.c
+@@ -7,7 +7,6 @@
+ #include <linux/swap.h>
+ #include <asm/page.h>
+ #include <asm/tlbflush.h>
+-#include <linux/mm.h>
+ #include "newcall.h"
+ #include "fileHandler.h"
+ 
+@@ -67,13 +66,6 @@ static void vaddr2paddr(unsigned long vaddr, uint64_t pos)
+     struct page* page = pte_page(*pte);
+     if(!PageAnon(page)) printk("not an anonymous page from swapout");
+     page_remove_rmap(page, false);
+-
+-    if(is_zone_device_page(page)) printk("zone device page from swapout");
+-    // printk("map count %d", page_mapcount(page));
+-    // printk("ref-count %d", page_ref_count(page));
+-    // set_page_count(page, -1);
+-    // printk("ref-count %d", page_ref_count(page));
+-    // __free_pages(page, 0);
+     put_page(page);
+ 
+ 
+@@ -145,7 +137,7 @@ SYSCALL_DEFINE2(swapout, uint64_t*, ptr, uint64_t, size){
+         printk("This task is not registered");
+         return 0;
+     }
+-    printk("suggested size = %lld", size);
++    // printk("suggested size = %lld", size);
+ 
+     if(size == 0) return 0;
+ 
+@@ -207,6 +199,8 @@ SYSCALL_DEFINE2(swapout, uint64_t*, ptr, uint64_t, size){
+ 
+     close(f);
+ 
++    shrink_my_caches();
++
+     flush_tlb_mm(current->mm);
+     return 0;
+ }
+-- 
+2.25.1
+
